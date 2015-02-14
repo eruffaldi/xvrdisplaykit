@@ -312,7 +312,7 @@ function StereoRender(obj,fx)
             // use Left but with 0 eye separation
             SceneSetParam(VR_EYE_SEPARATION, 0.0000);                
             var flags = 0;
-            SceneBeginRel(view.x,view.y,view.z,view.w,VR_STEREO_LEFT|flags);
+            SceneBeginRel(0,0,1,1,VR_STEREO_LEFT|flags);
             stereoActiveEye = STEREO_EYE_CENTER;
             if(obj == Void) callback(fx); else obj.__call(fx);
             SceneEnd();
