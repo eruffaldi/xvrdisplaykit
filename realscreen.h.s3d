@@ -1,0 +1,78 @@
+/**
+ * Real Screen Rendering by Emanuele Ruffaldi for XVR
+ * 2010
+ *
+ * Usage: 
+ * SET SCENE_NEAR = 0.00001;
+ * #include "realscreen.h.s3d"
+ * OnInit()
+ *  RSInit()
+ * OnFrame
+ *  RSSceneBegin()
+ *  ...
+ *  RSSceneEnd()
+ */
+#ifndef REALSCREEN_H_S3D
+#define REALSCREEN_H_S3D
+
+var RSDisabled=false;
+
+function RSInit(sx,sy)
+{
+    if(sx == Void)
+    {
+        var gdi = CVmExternDll("gdi32.dll");
+        var user = CVmExternDll("user32.dll");
+        gdi.__AddFunction(C_INT,"GetDeviceCaps",C_INT,C_INT);
+        user.__AddFunction(C_VOID,"ReleaseDC",C_INT);
+        user.__AddFunction(C_INT,"GetForegroundWindow",C_VOID);
+        user.__AddFunction(C_INT,"GetDC",C_INT);
+        var dc = user.GetDC(user.GetForegroundWindow());
+        //var dc = user.GetDC(0);
+        sx = gdi.GetDeviceCaps(dc,4)/1000.0; // 8 for pixels
+        sy = gdi.GetDeviceCaps(dc,6)/1000.0; // 10 for pixels
+        user.ReleaseDC(dc);
+    }
+    OutputLN("Real Screen X:",sx," Y:",sy);
+    SceneSetParam(VR_HEADTRACKER, 1);
+    SceneSetParam(VR_SCREEN_SIZE, sx,sy);
+    var z = 0.0001; // small value higher than ... SCENE_NEAR
+    SceneSetParam(VR_TRACKER_POSITION,0.0,0.0,z);
+    SceneSetParam(VR_TRACKER_ORIENTATION, 0.0, 0.0, 0.0);
+    SceneSetParam(VR_EYE_SEPARATION, 0.0000);    
+}
+
+extern function CVmWebBrowser;
+
+function RSFullscreen()
+{
+    //var b = CVmWebBrowser();
+    //b.fullscreen(true);
+}
+
+function RSSetUserPosOrient(pos,orient)
+{
+    if(valtype(pos) == "V")
+        SceneSetParam(VR_TRACKER_POSITION,pos.x,pos.y,pos.z);
+    else
+        SceneSetParam(VR_TRACKER_POSITION,0.0,0.0,pos);
+    if(orient != Void)
+        SceneSetParam(VR_TRACKER_ORIENTATION,orient.x,orient.y,orient.z);
+}
+
+function RSSceneBegin(flags)
+{
+	if(flags == Void)
+		flags = 0;
+	if(RSDisabled)
+		SceneBegin(flags);
+	else
+	    SceneBeginRel( 0.0,0.0 , 1.0,1.0 , VR_STEREO_LEFT|flags);
+}
+
+function RSSceneEnd()
+{
+    SceneEnd();
+}
+
+#endif

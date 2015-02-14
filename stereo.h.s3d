@@ -1,0 +1,479 @@
+/*
+ * Title: Flexible Stereo Rendering for XVR
+ * Author: by Emanuele Ruffaldi
+ * Date: 2005/10/20
+ * Description: a script that can be used to work with stereo graphics in a flexible way
+ * Usage:
+ * - include this
+ * - set the stereoActive and stereoQuad variables 
+ * - invoke the StereoRender function in the ondraw by passing the name of the function
+ *
+ * Changes:
+ * - added red/blue with and without accumulation buffer (http://astronomy.swin.edu.au/~pbourke/opengl/redblue/)
+ */
+#ifndef STEREO_H_S3D
+#define STEREO_H_S3D
+
+/**
+ * Modalities:
+ *  NONE regular XVR
+ *  QUAD means to render using Quad buffering
+ *  SIDE means to use half of the screen using side by side
+ *  COLOR means to use color
+ *  LEFTEYE shows left eye in all viewport
+ *  RIGHTEYE shows right eye in all viewport
+ *  MONO means to use a centered view corrected with screen size 
+ *  
+ */
+#define STEREO_NONE 0
+#define STEREO_QUAD 1
+#define STEREO_SIDE 2
+#define STEREO_COLOR 3
+#define STEREO_LEFTEYE 4
+#define STEREO_RIGHTEYE 5
+#define STEREO_MONO 6
+
+/// stereo color modes
+#define STEREO_COLOR_RB 1
+#define STEREO_COLOR_RG 2
+#define STEREO_COLOR_RC 3
+#define STEREO_COLOR_BR 4
+#define STEREO_COLOR_GR 5 
+#define STEREO_COLOR_CR 6
+
+var stereoMode = STEREO_NONE;
+var stereoColorMode = STEREO_COLOR_RG;
+var stereoColorAccum = false;
+
+var stereoSep = 0.1;
+var stereoFocal = 2.5;
+var stereoisxvr = Void; // XVR current Stereo Capability, Void means unspecified, False is not available
+
+#define STEREO_EYE_CENTER 0
+#define STEREO_EYE_LEFT -1
+#define STEREO_EYE_RIGHT 1
+
+var stereoActiveEye = STEREO_EYE_CENTER; // used for information
+var stereoFrame = 0;
+var stereoSwap = false;
+var stereoScreens;
+var stereoScreenPos=[0,0,0]; // for MONO mode set z as NEAR 0.0001
+var stereoScreenOrient; // TODO
+var stereoCamMatrix;
+
+extern function callback;
+function StereoRenderMask(eye);
+
+// accumulation buffer not in XVR: http://www.opengl.org/resources/tutorials/advanced/advanced96/node38.htm
+function glReadBuffer(x)
+{}
+
+function glClearAccum(x,y,z,w)
+{}
+
+function glAccum(x,y)
+{}
+
+/**
+ Returns size of screen in pixels. The screen is the one in which we have the 
+ */
+function GetScreenSize()
+{
+    var gdi = CVmExternDll("gdi32.dll");
+    var user = CVmExternDll("user32.dll");
+    gdi.__AddFunction(C_INT,"GetDeviceCaps",C_INT,C_INT);
+    user.__AddFunction(C_VOID,"ReleaseDC",C_INT);
+    user.__AddFunction(C_INT,"GetForegroundWindow",C_VOID);
+    user.__AddFunction(C_INT,"GetDC",C_INT);
+    var dc = user.GetDC(user.GetForegroundWindow());
+    //var dc = user.GetDC(0);
+    sx = gdi.GetDeviceCaps(dc,4)/1000.0; // 8 for pixels
+    sy = gdi.GetDeviceCaps(dc,6)/1000.0; // 10 for pixels
+    user.ReleaseDC(dc);
+    return [sx,sy];
+}
+
+/**
+ * Stereo Render with support of Screens
+ */
+function StereoScreensRender(obj,fx)
+{	
+	if(fx == Void)
+	{
+		fx = obj;
+		obj = Void;
+	}
+	stereoFrame++;
+    stereoCamMatrix = CameraGetMatrix();
+    SceneSetParam(VR_EYE_SEPARATION, stereoSep);
+    SceneSetParam(VR_FOCAL_LENGHT, stereoFocal);
+    SceneSetParam(VR_TRACKER_POSITION,stereoScreenPos.x,stereoScreenPos.y,stereoScreenPos.z);
+    //SceneSetParam(VR_TRACKER_ORIENTATION,0.0, 0.0, 0.0); //    
+    
+	foreach(var s in stereoScreens)
+    {
+        var view = s[0];
+        var size = s[1];
+        var rot = s[2];
+        var pos = s[3];
+        var nf = len(s) > 4 ? s[4]: Void;
+        var lefteye = stereoSwap? VR_STEREO_RIGHT:VR_STEREO_LEFT;
+        var righteye = stereoSwap? VR_STEREO_LEFT: VR_STEREO_RIGHT;
+        var camerachanged = false;
+        
+        if(size != Void)
+            SceneSetParam(VR_SCREEN_SIZE, size.x,size.y);
+        
+        if(nf != Void)
+            SceneSetParam(VR_FOV_NEAR_FAR,[60,nf.x,nf.y]);
+        
+        if(pos != Void)
+        {
+            CameraSetPosition(pos+[stereoCamMatrix[12],stereoCamMatrix[13],stereoCamMatrix[14]]);
+            camerachanged = true;
+        }
+        if(rot != Void && rot[0] != 0)
+        {
+            CameraRotate(rot[0],rot[1],rot[2],rot[3]);
+            camerachanged = true;
+        }
+        OutputLN(pos,rot);
+        switch(stereoMode)
+        {
+        case STEREO_QUAD:               
+            if(stereoisxvr != Void && !stereoisxvr)
+            {
+                glDrawBuffer(GL_BACK);
+                SceneBeginRel(view.x,view.y,view.z,view.w);
+                    stereoActiveEye = STEREO_EYE_CENTER;
+                    if(obj == Void) callback(fx); else obj.__call(fx);
+                SceneEnd();            
+            }
+            else
+            {
+                glDrawBuffer( GL_BACK_LEFT );
+                SceneBeginRel(view.x,view.y,view.z,view.w,lefteye);
+                    stereoActiveEye = STEREO_EYE_LEFT;
+                    if(obj == Void) callback(fx); else obj.__call(fx);
+                SceneEnd();            
+                glDrawBuffer( GL_BACK_RIGHT );
+                SceneBeginRel(view.x,view.y,view.z,view.w,righteye);
+                    stereoActiveEye = STEREO_EYE_RIGHT;
+                    if(obj == Void) callback(fx); else obj.__call(fx);
+                SceneEnd();
+            }
+            break;
+        case STEREO_SIDE:
+            glDrawBuffer(GL_BACK);
+            SceneBeginRel(view.x,view.y,0.5*view.z,view.w,lefteye);
+                stereoActiveEye = STEREO_EYE_LEFT;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            SceneBeginRel(0.5*view.z+view.x,view.y,0.5*view.z,view.w,righteye);
+                stereoActiveEye = STEREO_EYE_RIGHT;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            break;
+        case STEREO_MONO:   
+            {
+                glDrawBuffer(GL_BACK);
+                // use Left but with 0 eye separation
+                SceneSetParam(VR_EYE_SEPARATION, 0.0000);                
+                var flags = 0;
+                SceneBeginRel(view.x,view.y,view.z,view.w,VR_STEREO_LEFT|flags);
+                    stereoActiveEye = STEREO_EYE_CENTER;
+                    if(obj == Void) callback(fx); else obj.__call(fx);
+                SceneEnd();
+            }
+            break;            
+        case STEREO_LEFTEYE:
+        case STEREO_RIGHTEYE:
+        case STEREO_NONE:
+        default:
+            glDrawBuffer(GL_BACK);
+            SceneBeginRel(view.x,view.y,view.z,view.w,stereoMode == STEREO_LEFTEYE? lefteye : stereoMode == STEREO_NONE ? 0 : righteye);
+                stereoActiveEye = stereoMode == STEREO_LEFTEYE ? STEREO_EYE_LEFT : stereoMode == STEREO_NONE ? STEREO_EYE_CENTER : STEREO_EYE_RIGHT;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            break;
+        }	
+        if(camerachanged)
+            CameraSetMatrix(stereoCamMatrix);
+    }
+}
+
+// Callbacks
+// fx 
+// obj, fx
+function StereoRender(obj,fx)
+{	
+    if(stereoScreens != Void)
+        return StereoScreensRender(obj,fx);
+    var lefteye = stereoSwap? VR_STEREO_RIGHT:VR_STEREO_LEFT;
+    var righteye = stereoSwap? VR_STEREO_LEFT: VR_STEREO_RIGHT;
+	if(fx == Void)
+	{
+		fx = obj;
+		obj = Void;
+	}
+	stereoFrame++;	
+	stereoCamMatrix = CameraGetMatrix();
+    SceneSetParam(VR_EYE_SEPARATION,stereoSep);
+    SceneSetParam(VR_FOCAL_LENGHT ,stereoFocal);    
+    SceneSetParam(VR_TRACKER_POSITION,stereoScreenPos.x,stereoScreenPos.y,stereoScreenPos.z);
+	switch(stereoMode)
+	{
+	case STEREO_QUAD:
+        if(stereoisxvr != Void && !stereoisxvr)
+        {
+            glDrawBuffer(GL_BACK);
+            SceneBegin();
+                stereoActiveEye = STEREO_EYE_CENTER;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();                
+        }
+        else
+        {
+            glDrawBuffer(GL_BACK_LEFT);
+            SceneBegin(lefteye);
+                stereoActiveEye = STEREO_EYE_LEFT;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            glDrawBuffer(GL_BACK_RIGHT);
+            SceneBegin(righteye);
+                stereoActiveEye = STEREO_EYE_RIGHT;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+        }
+        break;
+    case STEREO_SIDE:
+        glDrawBuffer(GL_BACK);
+        SceneBeginRel(0.0,0.0,0.5,1.0,lefteye);
+            stereoActiveEye = STEREO_EYE_LEFT;
+            if(obj == Void) callback(fx); else obj.__call(fx);
+        SceneEnd();
+        SceneBeginRel(0.5,0.0,0.5,1.0,righteye);
+            stereoActiveEye = STEREO_EYE_RIGHT;
+            if(obj == Void) callback(fx); else obj.__call(fx);
+        SceneEnd();
+        break;
+	case STEREO_COLOR:
+        // force background to black						
+        if(!stereoColorAccum)
+        {			
+            glDrawBuffer(GL_BACK);
+            stereoActiveEye = STEREO_EYE_LEFT;
+            StereoRenderMask(stereoActiveEye);
+            SceneBegin(VR_STEREO_LEFT);
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            glColorMask(GL_FALSE,GL_FALSE,GL_TRUE,GL_TRUE);
+            stereoActiveEye = STEREO_EYE_RIGHT;
+            StereoRenderMask(stereoActiveEye);
+            SceneBegin(VR_LEAVE_COLOR|VR_STEREO_RIGHT);
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();		
+            glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+        }
+        else
+        {
+            // setup
+            glDrawBuffer(GL_BACK);
+            glReadBuffer(GL_BACK);
+            glClearAccum(0.0,0.0,0.0,0.0);
+            
+            // left eye
+            glAccum(GL_LOAD,1.0);
+            stereoActiveEye = STEREO_EYE_LEFT;
+            StereoRenderMask(stereoActiveEye);
+            SceneBegin(VR_STEREO_LEFT);
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            
+            /// right eye
+            stereoActiveEye = STEREO_EYE_RIGHT;
+            StereoRenderMask(stereoActiveEye);
+            SceneBegin(VR_LEAVE_COLOR|VR_STEREO_RIGHT);
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();	
+            
+            /// accumulate over and then send to the final image
+            glAccum(GL_ACCUM,1.0);
+            glAccum(GL_RETURN,1.0);
+            
+            /// put status back
+            glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE); 
+            
+        }
+		break;
+        case STEREO_MONO:   
+        {
+            glDrawBuffer(GL_BACK);
+            // use Left but with 0 eye separation
+            SceneSetParam(VR_EYE_SEPARATION, 0.0000);                
+            var flags = 0;
+            SceneBeginRel(view.x,view.y,view.z,view.w,VR_STEREO_LEFT|flags);
+            stereoActiveEye = STEREO_EYE_CENTER;
+            if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+        }
+        break;            
+        case STEREO_LEFTEYE:
+        case STEREO_RIGHTEYE:
+            glDrawBuffer(GL_BACK);
+            SceneBegin(stereoMode == STEREO_LEFTEYE ? lefteye : righteye);
+                stereoActiveEye = stereoMode == STEREO_LEFTEYE ? STEREO_EYE_LEFT : STEREO_EYE_RIGHT;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            break;
+        }
+		case STEREO_NONE:
+        default:
+            glDrawBuffer(GL_BACK);
+            SceneBegin();
+                stereoActiveEye = STEREO_EYE_CENTER;
+                if(obj == Void) callback(fx); else obj.__call(fx);
+            SceneEnd();
+            break;
+	}	
+}
+
+function StereoInit()
+{
+    SceneSetParam(VR_HEADTRACKER, 1);    
+    SceneSetParam(VR_TRACKER_POSITION,0.0,0.0,0);
+    SceneSetParam(VR_TRACKER_ORIENTATION, 0.0, 0.0, 0.0);
+}
+
+function StereoRenderOne(obj,fx)
+{
+	if(fx == Void)
+	{
+		fx = obj;
+		obj = Void;
+	}
+	stereoFrame++;
+	
+	switch(stereoMode)
+	{
+	case STEREO_QUAD:
+		stereoCamMatrix = CameraGetMatrix();
+		SceneSetParam(VR_EYE_SEPARATION,stereoSep);
+		SceneSetParam(VR_FOCAL_LENGHT ,stereoFocal);
+		glDrawBuffer( GL_BACK_LEFT );
+		SceneBeginRel(VR_STEREO_LEFT);
+			stereoActiveEye = -1;
+			if(obj == Void) callback(fx); else obj.__call(fx);
+			glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+		SceneEnd();
+		break;
+	case STEREO_SIDE:
+		stereoCamMatrix = CameraGetMatrix();
+		SceneSetParam(VR_EYE_SEPARATION,stereoSep);
+		SceneSetParam(VR_FOCAL_LENGHT ,stereoFocal);
+			glDrawBuffer(GL_BACK);
+			SceneBeginRel(0.0,0.0,0.5,1.0,stereoSwap? VR_STEREO_RIGHT:VR_STEREO_LEFT);
+				stereoActiveEye = -1;
+				if(obj == Void) callback(fx); else obj.__call(fx);
+			SceneEnd();
+		break;
+	case STEREO_COLOR:
+		stereoCamMatrix = CameraGetMatrix();
+		SceneSetParam(VR_EYE_SEPARATION,stereoSep);
+		SceneSetParam(VR_FOCAL_LENGHT ,stereoFocal);
+			// force background to black						
+			if(!stereoColorAccum)
+			{			
+				glDrawBuffer(GL_BACK);
+				stereoActiveEye = -1;
+				StereoRenderMask(stereoActiveEye);
+				SceneBegin(VR_STEREO_LEFT);
+					if(obj == Void) callback(fx); else obj.__call(fx);
+				SceneEnd();
+			}
+			else
+			{
+				// setup
+				glDrawBuffer(GL_BACK);
+				glReadBuffer(GL_BACK);
+				glClearAccum(0.0,0.0,0.0,0.0);
+				
+				// left eye
+				glAccum(GL_LOAD,1.0);
+				stereoActiveEye = -1;
+				StereoRenderMask(stereoActiveEye);
+				SceneBegin(VR_STEREO_LEFT);
+					if(obj == Void) callback(fx); else obj.__call(fx);
+				SceneEnd();
+			}
+		break;
+	case STEREO_NONE:
+	default:
+		glDrawBuffer(GL_BACK);
+		SceneBegin();
+			stereoActiveEye = 0;
+			if(obj == Void) callback(fx); else obj.__call(fx);
+		SceneEnd();
+		break;
+	}	
+    CameraSetMatrix(stereoCamMatrix);
+}
+
+// If your XVR version supports IsFunction and callback remove
+// following lines
+
+function StereoRenderMask(eye)
+{
+	if(eye == -1)
+	{
+		switch(stereoColorMode)
+		{
+			case  STEREO_COLOR_RB:				
+			case  STEREO_COLOR_RG:
+			case  STEREO_COLOR_RC:
+ 				glColorMask(GL_TRUE,GL_FALSE,GL_FALSE,GL_TRUE);
+ 				break;		
+			case  STEREO_COLOR_BR:
+ 				glColorMask(GL_FALSE,GL_FALSE,GL_TRUE,GL_TRUE);
+ 				break;		
+			case  STEREO_COLOR_GR:
+				glColorMask(GL_FALSE,GL_TRUE,GL_FALSE,GL_TRUE);
+				break;		
+			case  STEREO_COLOR_CR:
+			 	glColorMask(GL_FALSE,GL_TRUE,GL_TRUE,GL_TRUE);
+				break;		
+		}	
+	}
+	else if(eye == 1)
+	{
+		switch(stereoColorMode)
+		{
+			case  STEREO_COLOR_RB:				
+				glColorMask(GL_FALSE,GL_FALSE,GL_TRUE,GL_TRUE);
+				break;		
+			case  STEREO_COLOR_RG:
+			 	glColorMask(GL_FALSE,GL_TRUE,GL_FALSE,GL_TRUE);
+				break;		
+			case  STEREO_COLOR_RC:
+				glColorMask(GL_FALSE,GL_TRUE,GL_TRUE,GL_TRUE);
+				break;		
+			case  STEREO_COLOR_BR:
+			case  STEREO_COLOR_GR:
+			case  STEREO_COLOR_CR:
+				glColorMask(GL_TRUE,GL_FALSE,GL_FALSE,GL_TRUE);
+				break;		
+		}	
+	}
+	else
+		glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+}
+
+/**
+ * Tells module that we have a stereo
+ */
+function StereoXVRisStereo(mode)
+{
+    stereoisxvr = mode;
+}
+
+#endif

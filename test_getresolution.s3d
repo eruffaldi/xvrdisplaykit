@@ -1,0 +1,62 @@
+#include <Script3d.h>
+SET SCENE_NEAR = 0.00001;
+SET SCENE_FAR = 1000; 
+
+var mesh = CVmNewMesh();
+var omesh;
+var z;
+
+var gdi,user,ker;
+function OnInit()
+{
+    var gdi = CVmExternDll("gdi32.dll");
+    var user = CVmExternDll("user32.dll");
+    ker = CVmExternDll("kernel32.dll");
+    ker.__AddFunction(C_VOID,"ExitProcess",C_INT);
+    gdi.__AddFunction(C_INT,"GetDeviceCaps",C_INT,C_INT);
+    user.__AddFunction(C_VOID,"ReleaseDC",C_INT);
+    user.__AddFunction(C_INT,"GetForegroundWindow",C_VOID);
+    user.__AddFunction(C_INT,"GetDC",C_INT);
+    var dc = user.GetDC(user.GetForegroundWindow());
+    var sx = gdi.GetDeviceCaps(dc,4)/1000.0;
+    var sy = gdi.GetDeviceCaps(dc,6)/1000.0;
+    OutputLN("X:",sx," Y:",sy);
+    user.ReleaseDC(dc);
+    SceneSetParam(VR_HEADTRACKER, 1);
+    SceneSetParam(VR_SCREEN_SIZE, sx,sy);
+    SceneSetParam(VR_TRACKER_ORIENTATION, 0.0, 0.0, 0.0);
+    z = 0.0001; // small value higher than ...
+    SceneSetParam(VR_TRACKER_POSITION,0.0,0.0,z);
+    SceneSetParam(VR_EYE_SEPARATION, 0.0000);
+    //mesh = CVmNewMesh(VRP_BOX,1,[-1,-1,-1]*size,[1,1,1]*size);
+    //var size = 0.10; 
+    //mesh = CVmNewMesh(VRP_BOX,1,[-0.5,-0.5,-1.0]*size,[0.5,0.5,0.0]*size);
+    //mesh = CVmNewMesh(VRP_BOX,1,[-0.25,-0.25,-1.0]*size,[0.25,0.25,0.0]*size);
+    var size = sy*0.98;
+    mesh = CVmNewMesh(VRP_PLANE,10,size*[-0.5,-0.5,0],size*[0.5,0.5,0],2);
+    omesh = CVmObj(mesh);
+}
+var anim = false;
+function OnFrame()
+{
+    switch(Keyboard())
+    {
+    case "q":
+        ker.ExitProcess(0);
+        break;
+    case " ":
+        anim = !anim;
+        break;
+    }
+    SceneBeginRel( 0.0,0.0 , 1.0,1.0 , VR_STEREO_LEFT);
+        omesh.SetPosition(0,0,0.0);
+        omesh.Draw();
+        ConsoleColor(1.0,0,0);
+        ConsoleText(0.1,0.5,sprintf("z %f",z));
+	SceneEnd();
+    if(anim)
+    {
+        z += 0.01;
+        SceneSetParam(VR_TRACKER_POSITION,0.0,0.0,z);
+    }
+}

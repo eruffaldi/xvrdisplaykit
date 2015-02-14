@@ -1,0 +1,240 @@
+/* Include s3d symbols */
+#include <Script3d.h>
+#include "stereo.h.s3d"
+
+/* Set global scene parameters */
+SET SCENE_FOV  = 60;
+SET SCENE_NEAR = 0.01;
+SET SCENE_FAR  = 10000;
+
+	/* initialize camera */
+var CamDir = [0, 0.3, -1];		// camera direction
+var CamPos = [0.0, 0.0, 0.0]; 	// camera position
+
+
+// TODO: put your global variables here
+
+
+/* Camera globals */
+
+/* Light globals */
+var Light0;
+var PosL = [0.0, 3.0, 2.0];	// default light position
+var CamMatrix;
+
+/* Function declarations */
+function CameraMoveMouse();
+function DrawGrid(col, size);
+
+function SetColor(bb,c)
+{	
+	var mat = CVmMaterial();
+	mat.Diffuse = [c.x,c.y,c.z,1];	
+	//bb.ForceMaterial(mat);
+}
+
+
+function OnDownload()
+{
+	// TODO: download your resources here
+	// E.g.: FileDownload("resource.ext");
+}
+
+
+function OnFrameTopMode()
+{
+	static var bb,b2,b3;
+	if(bb == Void)
+	{
+		bb = 	CVmobj(CVmNewMesh(VRP_PLANE,1,[-0.5,-0.5,0],[0.5,0.5,0],2));
+		b2 = CVmobj(CVmNewMesh(VRP_BOX,1,[-0.5,-0.5,-0.5],[0.5,0.5,0.5]));
+		SetColor(b2,[1,0,1]);
+		b3 = CVmobj(CVmNewMesh(VRP_BOX,1,[-0.5,-0.5,-0.5],[0.5,0.5,0.5]));
+		SetColor(b3,[1,1,0]);
+	}
+	SceneBegin();
+		b2.SetPosition(stereoScreenPos);
+		b2.SetScale(0.1,0.1,0.1); // 10cm		
+		b2.Draw();
+		b3.SetRotationMatrix(CamMatrix);
+		b3.SetPosition(stereoScreenPos+[CamMatrix[12],CamMatrix[13],CamMatrix[14]]);
+		b3.SetScale(0.1,0.1,0.5); // 10cm		
+		b3.Draw();
+				
+
+		var j = 0;
+		foreach(var s in stereoScreens)
+		{
+			SetColor(bb,j == 0 ? [1,0,0] : j == 1 ? [0,1,0] : [0,0,1]);
+			j++;
+	        var view = s[0];
+	        var size = s[1];
+	        var rot = s[2];
+	        var pos = s[3];
+	        var nf = len(s) > 4 ? s[4]: Void;
+			bb.SetScale(size.x,size.y,1);
+			bb.SetPosition([0,0,0]);
+			bb.Translate(pos);
+			bb.SetRotation(rot.x,rot.y,rot.z,rot.w);
+			bb.Draw();
+			// set color by number				
+		}
+	SceneEnd();
+}
+
+function OnInit(params)
+{
+
+	/* initialize light */
+	Light0 = CVmLight();
+	Light0.SetPosition(PosL);
+	Light0.SetDiffuse(1, 1, 1);
+	Light0.Enable();	
+
+	stereoMode = STEREO_SIDE;
+	stereoSep = 0.06;
+	stereoFocal = stereoSep*3; // rule of thumb
+	var third = 1.0/3;
+	stereoScreens = {
+		{ [0,0,third,1],[1.40,1.05], [-78,0,1,0], [0.80915,0,0.51353],[0.01,10000]}, // near,far
+		{ [third,0,third,1],[1.40,1.05], [0,0,1,0], [0,0,0],[0.01,10000]},
+		{ [2*third,0,third,1],[1.40,1.05], [78,0,1,0], [-0.80915,0,0.51353],[0.01,10000]}
+	};
+	//stereoScreens = { {[0,0,1,1],[1.05,1.05], [0,0,1,0], [0,0,0],Void,[0.01,10000]}};
+	//  
+	stereoScreenPos = [0, 0.3, 1.0]; // 30cm over the screen center that is 1.05 high
+	StereoInit();
+	
+	CameraActivate(1);
+	CameraSetDirection([0,0,-1]);
+	CameraSetPosition(stereoScreenPos+[0,0,1]*3);
+	CameraActivate(0);
+	CameraSetDirection(CamDir);
+	CameraSetPosition(CamPos);
+}
+
+function DrawMe()
+{
+	DrawGrid([0.5, 0.5, 0.5], 100);
+}
+
+function OnFrame()
+{
+	static var topmode = true;
+	CameraActivate(0);
+	CamMatrix = CameraGetMatrix();
+	CameraActivate(topmode ? 1 : 0);
+	/* manage camera */
+	CameraMoveMouse();
+	
+	switch(Keyboard())
+	{
+	case " ":
+		topmode = !topmode;break;
+	}
+
+	if(topmode)
+		OnFrameTopMode();
+	else
+		StereoRender("DrawMe");
+}
+
+
+
+function DownloadReady(RequestID)
+{
+	// TODO
+}
+
+
+
+function OnTimer()
+{
+	// TODO:
+}
+
+
+
+function OnExit()
+{
+	// TODO: put your cleanup code here
+}
+
+
+
+// Camera manager (using mouse)
+function CameraMoveMouse()
+{
+	static var InMouseR = false, InMouseL = false;				
+	static var PrecX = 0, PrecY = 0;			
+
+	if (Mouse.ButtonL)
+	{
+		if (InMouseL)
+		{	
+			CameraRotate((Mouse.X - PrecX) / 100.0, 0, 1, 0);
+			var CamPos = CameraGetPosition();
+			var CamDir = CameraGetDirection(); 
+			CamPos = CamPos - CamDir*((Mouse.Y - PrecY) / 100.0);
+			CameraSetPosition(CamPos);
+			OutputLN(CamPos,CamDir);
+		}
+		else
+		{
+			PrecX = Mouse.X;
+			PrecY = Mouse.Y;
+		}
+		InMouseL = true;		
+	}
+	else
+		InMouseL = false;
+
+	if (Mouse.ButtonR)
+	{
+		if (InMouseR)
+		{
+			var CamPos = CameraGetPosition();
+			CamPos[1] = CamPos[1] + (PrecY - Mouse.Y) / 100.0;
+			CameraSetPosition( CamPos );
+			OutputLN(CamPos,CamDir);
+		}
+		else
+		{
+			PrecX = Mouse.X;
+			PrecY = Mouse.Y;
+		}
+		InMouseR = true;
+	}
+	else
+		InMouseR = false;
+
+}
+
+
+
+function DrawGrid(col, size)
+{
+	/* let's not mess up current OpenGL status */
+	glPushAttrib(GL_LIGHTING_BIT | GL_LINE_BIT | GL_CURRENT_BIT);
+	
+	glLineWidth(1);
+	glDisable(GL_LIGHTING);
+	glColor(col);
+	var max = size / 2.0;
+	var min = -max;	
+	var step = size / 10.0;
+	
+	glBegin(GL_LINES);
+		for (var i = min; i <= max; i += step)
+		{
+			glVertex(i, 0, max);
+			glVertex(i, 0, min);
+			
+			glVertex(max, 0, i);
+			glVertex(min, 0, i);
+		}
+	glEnd();
+	
+	/* polite restoration of previous OpenGL status */
+	glPopAttrib();
+}

@@ -1,0 +1,171 @@
+#include <Script3d.h>
+#include "OnFrameFix.h.s3d"
+
+var lastpk = 0;
+var laststart = 0;
+var laststop = 0;
+var sync = 1;
+var rate = 0;
+var sendtime=0;
+var lastpacketid=0;
+var ker;
+function OnFrameOffloop();
+
+
+function OnInit(x)
+{
+	setlocaldir();
+    laststart = GetPerformanceTimer(); //GetTime();
+    global var dataPortSegnali = NetCreateChannel(17682, 0, VR_NO_BLOCKING);
+    global var SegnaliData; 
+    global var Segnali=vector(5);
+    rate = x == Void || x == "" ? 120 : Int(x);
+    OutputLN("Rate is ",rate, " Sync is ", sync!=0);
+    //OnFrameDelayInit(rate,Void,True);
+    OnFrameDelayInit(60,Void,True);
+}
+
+var lasttext;
+function OnFrameOffloop()
+{
+	var packetid = 0;
+	{
+    static var skip = 4;
+    var start = GetPerformanceTimer(); //GetTime();
+    while(true)
+    {
+	    SegnaliData=NetReceiveFrom(dataPortSegnali);
+		if(len(SegnaliData) != 0)
+		{
+			Segnali = UnpackVector("6d", SegnaliData);
+			packetid=Segnali[1];
+			sendtime=Segnali[0];
+		}
+		else
+			break;
+	}
+	 
+    switch(Keyboard())
+    {
+    case " ":
+    case "q":
+        Quit(0);
+        break;
+    case "v":
+        sync = sync != 0 ? 0 : 1;
+        SceneSetParam(VR_VERTICAL_SYNC,sync);
+        break;
+    }
+    SceneBegin();
+        ConsoleColor(1,1,1);
+        ConsoleText(0,0.5,lasttext);
+    SceneEnd();
+    
+    SceneBegin(VR_SHOW_STATS);
+        ConsoleColor(1,1,1);
+        ConsoleText(0,0.5,lasttext);
+    SceneEnd();
+    var stop = GetPerformanceTimer();
+       
+    var post = stop;
+    var deltaswap = laststop-start;
+        
+    if(skip > 0)
+    {
+        skip--;
+    	if(skip == 0)
+    	{
+    		OutputLN("dframe paktime post start_lastpaktime start_lastpaktime visualdelay swaptime");
+    	}
+        lasttext = "";
+    }
+    else
+    {
+  //      lasttext = sprintf("OnFrameLoop:%5.5d OnFrame:%5.5d OnFrameWait:%5.5d sync:%d rate:%d",start-laststart,stop-start,start-laststop,sync,rate);
+  //      OutputLN(lasttext);
+   //     lasttext = sprintf("Id: %5.5d Sent@: %5.5d Got@: %5.5d, disp@: %5.5d, diff@: %5.5d",packetid,sendtime,start,stop,stop-sendtime);
+        //lasttext = sprintf("%5.5d %5.5d %5.5d %5.5d %5.5d %5.5d",packetid,sendtime,stop,stop-sendtime,start-lastpk,deltaswap);
+        lasttext = sprintf("%5.5d %5.5d %5.5d %5.5d %5.5d %5.5d %5.5d",packetid-lastpacketid,sendtime,post,start-sendtime,start-lastpk,post-sendtime,deltaswap);
+        OutputLN(lasttext);
+    }   
+    laststart = start;
+    laststop = stop;
+    lastpk = sendtime;
+    lastpacketid = packetid;
+    }
+    
+}
+
+
+function OnFrame()
+{
+	SetClearColor(0,0,0);
+	OnFrameDelay(true);
+    switch(Keyboard())
+    {
+    case " ":
+    case "q":
+        Quit(0);
+        break;
+    case "v":
+        sync = sync != 0 ? 0 : 1;
+        SceneSetParam(VR_VERTICAL_SYNC,sync);
+        break;
+    }
+    /*
+    VR_SHOW_STATS is double	            
+    SceneBegin();
+        ConsoleColor(1,0,0);
+        ConsoleText(0,0.5,onfd_framedelaylasttext);
+    SceneEnd();
+    */
+    SceneBegin(VR_SHOW_STATS);
+        ConsoleColor(1,0,0);
+        ConsoleText(0,0.5,onfd_framedelaylasttext);
+    SceneEnd();
+    OnFrameDelay(false);
+}
+
+
+
+function OnExit()
+{
+	// TODO: put your cleanup code here
+}
+
+
+
+// Camera manager (using mouse)
+function CameraMoveMouse()
+{	
+
+}
+
+
+
+function DrawGrid(col, size)
+{
+	/* let's not mess up current OpenGL status */
+	glPushAttrib(GL_LIGHTING_BIT | GL_LINE_BIT | GL_CURRENT_BIT);
+	
+	glLineWidth(1);
+	glDisable(GL_LIGHTING);
+	glColor(col);
+	var max = size / 2.0;
+	var min = -max;	
+	var step = size / 10.0;
+	
+	glBegin(GL_LINES);
+		for (var i = min; i <= max; i += step)
+		{
+			glVertex(i, 0, max);
+			glVertex(i, 0, min);
+			
+			glVertex(max, 0, i);
+			glVertex(min, 0, i);
+		}
+	glEnd();
+	
+	/* polite restoration of previous OpenGL status */
+	glPopAttrib();
+}

@@ -1,0 +1,84 @@
+#include <Script3d.h>
+
+var glpdll;
+function GLPatcherInit()
+{
+    glpdll = CVmExternDll("glpatch.dll");
+    glpdll.__AddFunction(C_VOID,"init");
+    glpdll.__AddFunction(C_VOID,"setswapenable",C_INT); // on/off swap, default on
+    glpdll.__AddFunction(C_FLOAT,"getswaptime",C_INT); // absolute start swap time in seconds
+    glpdll.__AddFunction(C_FLOAT,"getswapduration"); // time after swap in seconds
+    glpdll.__AddFunction(C_VOID,"getswaptimestr",C_INT,C_PSTR); // as char same as below
+	glpdll.__AddFunction(C_FLOAT,		"QueryPerformanceTimeDelta", C_PCHAR,C_PCHAR);
+	glpdll.__AddFunction(C_VOID,		"QueryPerformanceTimeAsString", C_PCHAR);
+}
+
+function QueryPerformanceTimeDelta(a,b)
+{
+	return glpdll.QueryPerformanceTimeDelta(a,b);
+}
+
+function QueryPerformanceTimeAsString()
+{
+	var s = Space(8);
+	glpdll.QueryPerformanceTimeAsString(&s);
+	return s;
+}
+
+
+var laststart = 0;
+var laststop = 0;
+var sync = 1;
+var rate = 0;
+var lasttext = "";
+function OnInit(x)
+{
+    SetLocalDir(".");
+    GLPatcher();
+    xd.init();
+    laststart = GetPerformanceTimer(); //GetTime();
+    rate = x == Void || x == "" ? 100 : val(x);
+    OutputLN("Rate is ",rate, " Sync is ", sync!=0);
+    SetFrameRate(rate);
+    SceneSetParam(VR_VERTICAL_SYNC,sync);    
+}
+
+function OnFrame()
+{
+    xd.setswapenable(); 
+    static var skip = 4;
+    var start = GetPerformanceTimer(); //GetTime();
+    switch(Keyboard())
+    {
+    case " ":
+    case "q":
+        Quit(0);
+        break;
+    case "v":
+        sync = sync != 0 ? 0 : 1;
+        SceneSetParam(VR_VERTICAL_SYNC,sync);
+        break;
+    }
+    SceneBegin(VR_SHOW_STATS);
+        ConsoleColor(1,1,1);
+        ConsoleText(0,0.5,lasttext);
+    SceneEnd();
+    var preswap = GetPerformanceTimer();    
+    xd.setswapenable(0); 
+    SwapBuffers();    
+    var stop = GetPerformanceTimer();    
+    if(skip > 0)
+    {
+        skip--;
+        lasttext = "";
+    }
+    else
+    {
+        lasttext = sprintf("OnFrameLoop:%5.5d OnFramePreSwap:%5.5d BetweenOnFrame:%5.5d Swap:%5.5d sync:%d rate:%d ",start-laststart,preswap-start,start-laststop,stop-preswap,sync,rate);
+        OutputLN(lasttext);
+    }
+    laststart = start;
+    laststop = stop;
+    xd.setswapenable(0); // disabled Flush
+}
+

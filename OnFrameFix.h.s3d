@@ -1,0 +1,221 @@
+/*
+ OnFrameDelay by Emanuele Ruffaldi 2010
+ Release 1.3
+ Changes:
+    1.1 regression for estimating swap rate
+    1.2 use of glpatch.dll for intercepting SwapBuffers outside OnFrame and allowing custom SwapBuffer
+ 
+ Public Interface: 
+ 
+ function OnFrameDelayInit(step,minimumctime,showlog);
+ function OnFrameDelay(pre);
+  
+ Modes of Usage:
+ 1) Off
+ 2) NoVSYNC + anyrate + Instrumentation of SwapBuffer
+ 3) VSYNC and Sleep Alignment
+
+ 
+ Usage:
+ 
+    function OnFrame()
+    {
+        OnFrameDelay(true);
+        MYRENDERCODE
+        OnFrameDelay(false);
+    }
+
+ */
+#ifndef ONFRAMEFIX_H
+#define ONFRAMEFIX_H
+
+// GLPatcherInit can be used without the rest, just invoke init and then
+// enable/disable swap
+// Obtain post swap time using getswaptime, or time from last swap
+var glpdll;
+function GLPatcherInit()
+{
+    glpdll = CVmExternDll("glpatch.dll");
+    glpdll.__AddFunction(C_VOID,"init");
+    glpdll.__AddFunction(C_VOID,"setswapenable",C_INT); // on/off swap, default on
+    glpdll.__AddFunction(C_FLOAT,"getswaptime",C_INT); // absolute start swap time in seconds
+    glpdll.__AddFunction(C_FLOAT,"getswapduration"); // time after swap in seconds
+    glpdll.__AddFunction(C_FLOAT,"getswaptonow"); // time after swap in seconds
+    glpdll.__AddFunction(C_VOID,"getswaptimestr",C_INT,C_PSTR); // as char same as below
+	glpdll.__AddFunction(C_FLOAT,		"QueryPerformanceTimeDelta", C_PCHAR,C_PCHAR);
+	glpdll.__AddFunction(C_VOID,		"QueryPerformanceTimeAsString", C_PCHAR);
+	glpdll.__AddFunction(C_VOID,		"settimedswapenable", C_INT);
+}
+
+function QueryPerformanceTimeDelta(a,b)
+{
+	return glpdll.QueryPerformanceTimeDelta(a,b);
+}
+
+function QueryPerformanceTimeAsString()
+{
+	var s = Space(8);
+	glpdll.QueryPerformanceTimeAsString(&s);
+	return s;
+}
+
+ 
+// configuration
+var onfd_tStep = 1000/60.0;  // framerate
+var onfd_tdelayswap = 1;     // estmated delay respect swap, not needed with glpatch
+var onfd_tlastctimemin = 5;  // minimal computation time of glFlush
+var onfd_framedelayShowLog = true;
+var onfd_framedelaylasttext = "";
+var onfd_disabled = false;
+var onfd_minsleep = 2;
+
+var onfd_framestart=0,onfd_framestartreal=0,onfd_slept=0,onfd_skipped=0;
+var onfd_preswap=0;
+var onfd_postswap=0; // computed
+var onfd_lastframestart=0,onfd_lastpreswap=0;
+var onfd_ctimespan=0;
+var onfd_videobase=0,onfd_lastvideobase=0;
+
+/**
+ * Invoke with -step allowing to have maximum rate, instrumentation and everything else
+ */
+function OnFrameDelayInit(step,minimumctime,showlog)
+{
+    if(step == Void)
+        step = 60;
+    if(minimumctime == Void)
+        minimumctime = 5;
+    if(showlog == Void)
+        showlog = false;
+    onfd_tStep = 0;
+    if(step > 0)
+    {
+	    onfd_tStep = 1000.0/step;   
+	    SetFrameRate(1000); 
+	    SceneSetParam(VR_VERTICAL_SYNC,1);    
+	    OutputLN("FrameDelay setup VSYNC with MAXRATE");
+	}
+    else if(step < 0)
+	{
+	    SceneSetParam(VR_VERTICAL_SYNC,0);    
+    	SetFrameRate(-step); // also for zero
+    	OutputLN("FrameDelay NO-VSYNC with RATE",step);
+	}        
+	else
+	{
+		onfd_disabled = true;
+		return;
+	}
+    GLPatcherInit();    
+    if(glpdll != Void)
+        glpdll.init();	
+    onfd_framedelayShowLog = showlog;
+    onfd_tlastctimemin = minimumctime;
+}
+
+function OnFrameDelay(pre)
+{
+    if(onfd_disabled)
+        return;        
+	static var delayinited = false;
+    
+	if(!delayinited)
+	{
+	    if(pre)
+	    {
+            if(onfd_tStep != 0)
+            {
+                // videotime[i] = videotime + tdelayswap + onfd_tStep*i
+                // videotime[i+1]-videotime[i] = onfd_tStep + error
+                var data = Vector(8);
+                var ss = len(data);
+                var sx =0.0,sy=0.0;
+                SwapBuffers(); // skip first
+                for(var i = 0; i < len(data); i++)
+                {
+                    onfd_preswap = GetPerformanceTimer()/1000.0;
+                    SwapBuffers();
+                    onfd_postswap = GetPerformanceTimer()/1000.0;
+                    onfd_ctimespan = onfd_tlastctimemin;
+                    data[i] = onfd_postswap;
+                    onfd_videobase = onfd_postswap;
+                    sx += i;
+                    sy += onfd_postswap;
+               }
+               // special case: sx = n(n+1)/2 = ss(ss+1)/2 and then  sxoss=sx/ss=(ss+1)/2;
+                var sxoss = sx/ss; //(ss+1)/2;
+                var b=0.0,st2=0.0;
+                for(var i = 0; i < len(data); i++)
+                {
+                    var t = i-sxoss; // 
+                    st2 += t*t;
+                    b += t*data[i];
+                }
+                // perform linear regression over data t = 0....len(data)-1 and matrix is [1 i]
+                b /= st2;
+                var a = (sy-sx*b)/ss;   // sy/ss-b*ss*(ss+1)/2/ss = sy/ss-b*(ss+1)/2=sy/ss-b*sxoss
+                OutputLN("Acquired SwapBuffers:",data);
+                OutputLN(sprintf("Estimation base:%f step:%f lastPost:%f estimatedLastPost:%f", a,b,data[len(data)-1],a+b*(len(data)-1)));
+                if(onfd_framedelayShowLog)
+                {
+                    OutputLN("PostSwap PreFrame DSwap CTime(us) Sleep RealSleep SkippedFrames");
+                }
+            }
+			if(glpdll != Void)
+				glpdll.settimedswapenable(1);
+			delayinited = true;
+		}
+        else
+            return;
+	}
+    
+	{
+		if(pre)
+		{
+			// TODO: use QueryPerformanceTimeAsString and QueryPerformanceTimeDelta instead for absolute references
+            var now = GetPerformanceTimer()/1000.0; 
+            onfd_postswap = glpdll != Void ? now-glpdll.getswaptonow() : now-onfd_tdelayswap;
+            onfd_lastframestart = onfd_framestart;
+            onfd_framestartreal = now;
+            onfd_framestart = now;
+            
+            // if we are active then compute sleep
+            if(onfd_tStep > 0)
+            {
+                onfd_lastvideobase = onfd_videobase;                 
+                onfd_videobase = onfd_postswap;
+                onfd_skipped = 0;
+                var nextswap;
+                for(nextswap = onfd_videobase+onfd_tStep; nextswap < now; nextswap += onfd_tStep)
+                    onfd_skipped ++;
+                
+                var timetowakeforwork = nextswap-onfd_ctimespan;
+                if(timetowakeforwork-now > onfd_minsleep)
+                {
+                    Sleep((timetowakeforwork-now));	
+                    onfd_framestartreal = GetPerformanceTimer()/1000.0;
+                    onfd_slept = onfd_framestartreal-now;
+                }
+                else
+                    onfd_slept = 0;
+            }
+		}	        
+		else
+		{        
+            var now = GetPerformanceTimer()/1000.0;
+            onfd_lastpreswap = onfd_preswap; 
+			onfd_preswap = now;                       
+			onfd_ctimespan = now-onfd_framestartreal;
+			if(onfd_ctimespan < onfd_tlastctimemin)
+				onfd_ctimespan = onfd_tlastctimemin;                            
+                onfd_framedelaylasttext = sprintf("%f %f %5.5d %5.5d %5.5d %5.5d %2.2d",
+	        	onfd_postswap,onfd_framestartreal,onfd_videobase-onfd_lastvideobase,onfd_ctimespan*1000,(onfd_postswap-onfd_lastpreswap),onfd_slept,onfd_skipped);
+	        if(onfd_framedelayShowLog)
+            {
+		        OutputLN(onfd_framedelaylasttext);
+            }
+                
+		}
+	}       
+}
+#endif
